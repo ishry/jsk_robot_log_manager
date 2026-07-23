@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+
+import argparse
+import sys
+
+import rospy
+from std_srvs.srv import Trigger
+
+from jsk_robot_log_manager.srv import StartLogging
+
+
+def call_service(service_name, service_type, *args):
+    try:
+        rospy.wait_for_service(service_name, timeout=5.0)
+        response = rospy.ServiceProxy(service_name, service_type)(*args)
+    except (rospy.ROSException, rospy.ServiceException) as error:
+        print("ERROR: {}".format(error), file=sys.stderr)
+        return 1
+
+    print(response.message)
+    if hasattr(response, "directory") and response.directory:
+        print(response.directory)
+    return 0 if response.success else 1
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Start, stop, or inspect coordinated robot logging."
+    )
+    parser.add_argument(
+        "--manager",
+        default="/jsk_robot_log_manager",
+        help="manager node namespace (default: /jsk_robot_log_manager)",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    start_parser = subparsers.add_parser("start")
+    start_parser.add_argument("name", nargs="?", default="session")
+    start_parser.add_argument(
+        "--duration",
+        type=int,
+        default=0,
+        help="hrpsys buffer duration in seconds (default: node setting)",
+    )
+    subparsers.add_parser("stop")
+    subparsers.add_parser("status")
+
+    args = parser.parse_args(rospy.myargv()[1:])
+    if args.command is None:
+        parser.print_help()
+        return 2
+    if args.command == "start" and args.duration < 0:
+        parser.error("--duration must be zero or greater")
+
+    rospy.init_node("robot_log_client", anonymous=True)
+    manager_namespace = "/" + args.manager.strip("/")
+    if args.command == "start":
+        return call_service(
+            manager_namespace + "/start",
+            StartLogging,
+            args.name,
+            args.duration,
+        )
+    return call_service(
+        manager_namespace + "/{}".format(args.command),
+        Trigger,
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

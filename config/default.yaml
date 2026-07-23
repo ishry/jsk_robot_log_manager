@@ -1,0 +1,9 @@
+neuro_targets:
+  - name: neuro_7001
+    host: 127.0.0.1
+    port: 7001
+    required: false
+  - name: neuro_7002
+    host: 127.0.0.1
+    port: 7002
+    required: false

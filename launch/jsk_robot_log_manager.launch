@@ -1,0 +1,18 @@
+<launch>
+  <arg name="config_file" default="$(find jsk_robot_log_manager)/config/default.yaml"/>
+  <arg name="log_root" default="$(env HOME)/jsk_robot_logs"/>
+  <arg name="default_duration_sec" default="180"/>
+  <arg name="record_all" default="true"/>
+  <arg name="min_free_gb" default="5"/>
+  <arg name="namespace" default="/"/>
+  <arg name="node_name" default="jsk_robot_log_manager"/>
+
+  <node pkg="jsk_robot_log_manager" type="jsk_robot_log_manager_node.py"
+        name="$(arg node_name)" ns="$(arg namespace)" output="screen">
+    <rosparam command="load" file="$(arg config_file)"/>
+    <param name="log_root" value="$(arg log_root)"/>
+    <param name="default_duration_sec" value="$(arg default_duration_sec)"/>
+    <param name="record_all" value="$(arg record_all)"/>
+    <param name="min_free_gb" value="$(arg min_free_gb)"/>
+  </node>
+</launch>

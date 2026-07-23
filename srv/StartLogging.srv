@@ -1,0 +1,8 @@
+# Optional label appended to the timestamped JSK robot-log session directory.
+string name
+# Size of the hrpsys ring buffer in seconds. Zero uses the node default.
+uint32 duration_sec
+---
+bool success
+string message
+string directory

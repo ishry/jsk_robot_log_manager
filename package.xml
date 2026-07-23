@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>jsk_robot_log_manager</name>
+  <version>0.1.0</version>
+  <description>Coordinates hrpsys, multiple Neuro VM loggers, and rosbag recording.</description>
+
+  <maintainer email="leus@todo.todo">leus</maintainer>
+  <license>BSD</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <build_depend>message_generation</build_depend>
+
+  <depend>ak_neuro_vm</depend>
+  <depend>hrpsys_ros_bridge</depend>
+  <depend>rospy</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+
+  <exec_depend>message_runtime</exec_depend>
+  <exec_depend>rosbag</exec_depend>
+</package>
