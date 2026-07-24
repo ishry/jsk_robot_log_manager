@@ -292,7 +292,6 @@ class JskRobotLogManager(object):
             rosbag_executable,
             "record",
             "--lz4",
-            "--min-space={}G".format(self.min_free_gb),
             "-O",
             bag_prefix,
         ]
