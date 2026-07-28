@@ -13,6 +13,7 @@ import socket
 import subprocess
 import threading
 import time
+from urllib.parse import urlparse
 
 import rospy
 from hrpsys_ros_bridge.srv import OpenHRP_DataLoggerService_clear
@@ -93,6 +94,11 @@ class JskRobotLogManager(object):
             "~status",
             Trigger,
             self.handle_status,
+        )
+        self.test_service = rospy.Service(
+            "~test",
+            Trigger,
+            self.handle_test,
         )
         rospy.on_shutdown(self.on_shutdown)
 
@@ -259,14 +265,16 @@ class JskRobotLogManager(object):
             )
         return response
 
-    def check_neuro(self):
+    def check_neuro(self, timeout_sec=None):
+        if timeout_sec is None:
+            timeout_sec = self.neuro_timeout_sec
         available_targets = []
         unavailable_targets = []
         for target in self.neuro_targets:
             try:
                 connection = socket.create_connection(
                     (target["host"], target["port"]),
-                    timeout=self.neuro_timeout_sec,
+                    timeout=timeout_sec,
                 )
                 connection.close()
                 available_targets.append(target)
@@ -507,7 +515,7 @@ class JskRobotLogManager(object):
                 rospy.loginfo(self.last_status)
                 response_message = "Logging started."
                 if session["warnings"]:
-                    response_message += " " + " ".join(session["warnings"])
+                    response_message += "\n" + "\n".join(session["warnings"])
                 return StartLoggingResponse(
                     success=True,
                     message=response_message,
@@ -580,6 +588,10 @@ class JskRobotLogManager(object):
         errors.extend(self.stop_rosbag())
         session["components"]["rosbag"]["status"] = "stopped"
 
+        self.wait_for_rosbag_output(os.path.join(
+            session["directory"],
+            "ros",
+        ))
         hrpsys_files = self.nonempty_files(glob.glob(hrpsys_prefix + ".*"))
         neuro_files = {}
         for target in self.neuro_targets:
@@ -643,6 +655,21 @@ class JskRobotLogManager(object):
         rospy.loginfo(self.last_status)
         return True, self.last_status
 
+    def wait_for_rosbag_output(self, ros_directory, timeout_sec=5.0):
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline:
+            active_files = glob.glob(os.path.join(
+                ros_directory,
+                "*.bag.active",
+            ))
+            bag_files = self.nonempty_files(glob.glob(os.path.join(
+                ros_directory,
+                "*.bag",
+            )))
+            if bag_files and not active_files:
+                return
+            time.sleep(0.05)
+
     def nonempty_files(self, paths):
         return sorted([
             path for path in paths
@@ -661,19 +688,257 @@ class JskRobotLogManager(object):
             success, message = self.stop_current_session("requested")
             return TriggerResponse(success=success, message=message)
 
+    def handle_test(self, _request):
+        with self.lock:
+            if self.session is not None:
+                return TriggerResponse(
+                    success=False,
+                    message="Cannot test while logging is active.",
+                )
+
+            test_request = type("TestStartRequest", (), {})()
+            test_request.name = "test"
+            test_request.duration_sec = 5
+            start_response = self.handle_start(test_request)
+            session_directory = start_response.directory
+            if not start_response.success:
+                cleanup_error = self.remove_test_directory(
+                    session_directory
+                )
+                message = "Test start failed: {}".format(
+                    start_response.message
+                )
+                if cleanup_error:
+                    message += "\n{}".format(cleanup_error)
+                return TriggerResponse(success=False, message=message)
+
+            for elapsed_sec in range(5):
+                rospy.loginfo(
+                    "Log test running: %d/5 seconds",
+                    elapsed_sec + 1,
+                )
+                time.sleep(1.0)
+
+            success, stop_message = self.stop_current_session("test")
+            message = self.format_test_results(
+                test_request.name,
+                session_directory,
+                success,
+                stop_message,
+            )
+            cleanup_error = self.remove_test_directory(session_directory)
+            if cleanup_error:
+                success = False
+                message += "\n{}".format(cleanup_error)
+            else:
+                message += "\nTemporary test data was removed."
+            return TriggerResponse(success=success, message=message)
+
+    def format_test_results(
+        self,
+        session_name,
+        session_directory,
+        success,
+        stop_message,
+    ):
+        manifest_path = os.path.join(session_directory, "manifest.json")
+        try:
+            with open(manifest_path) as stream:
+                session = json.load(stream)
+        except (OSError, ValueError) as error:
+            return (
+                "Test results:\n"
+                "Overall: FAIL (could not read test manifest for {}: {})"
+            ).format(session_name, error)
+
+        files = session.get("files", {})
+        lines = ["Test results:"]
+        lines.append(self.test_file_result_line(
+            "hrpsys",
+            files.get("hrpsys", 0),
+        ))
+        lines.append(self.test_file_result_line(
+            "rosbag",
+            files.get("rosbag", 0),
+        ))
+
+        neuro_files = files.get("neuro", {})
+        neuro_components = session.get("components", {}).get("neuro", {})
+        for target in session.get("neuro_targets", []):
+            name = target["name"]
+            component = neuro_components.get(name, {})
+            if component.get("status") == "skipped":
+                requirement = (
+                    "required" if target["required"] else "optional"
+                )
+                lines.append(
+                    "Neuro {}: SKIPPED ({}; disconnected)".format(
+                        name,
+                        requirement,
+                    )
+                )
+            else:
+                lines.append(self.test_file_result_line(
+                    "Neuro {}".format(name),
+                    neuro_files.get(name, 0),
+                ))
+
+        skipped_neuro = any(
+            component.get("status") == "skipped"
+            for component in neuro_components.values()
+        )
+        if success and skipped_neuro:
+            lines.append("Overall: PASS with warnings")
+        elif success:
+            lines.append("Overall: PASS")
+        else:
+            lines.append("Overall: FAIL ({})".format(stop_message))
+        return "\n".join(lines)
+
+    def test_file_result_line(self, source_name, file_count):
+        if file_count > 0:
+            file_label = "file" if file_count == 1 else "files"
+            return "{}: PASS ({} non-empty {})".format(
+                source_name,
+                file_count,
+                file_label,
+            )
+        return "{}: FAIL (no non-empty files)".format(source_name)
+
+    def remove_test_directory(self, session_directory):
+        if not session_directory:
+            return ""
+        try:
+            shutil.rmtree(session_directory)
+        except OSError as error:
+            message = (
+                "Could not remove temporary test data at {}: {}"
+            ).format(session_directory, error)
+            rospy.logerr(message)
+            return message
+        return ""
+
     def handle_status(self, _request):
         with self.lock:
+            status_lines = []
             if self.session is None:
-                return TriggerResponse(
-                    success=True,
-                    message="inactive; {}".format(self.last_status),
+                status_lines.append(
+                    "inactive; {}".format(self.last_status)
                 )
+            else:
+                status_lines.append("recording: {}".format(
+                    self.session["directory"]
+                ))
+
+            status_lines.extend(self.ros_status_lines())
+            status_lines.append(self.hrpsys_status_line())
+            status_lines.extend(self.neuro_status_lines())
             return TriggerResponse(
                 success=True,
-                message="recording: {}".format(
-                    self.session["directory"]
-                ),
+                message="\n".join(status_lines),
             )
+
+    def ros_status_lines(self):
+        master_uri = os.environ.get("ROS_MASTER_URI", "(not set)")
+        try:
+            master_ip = self.resolve_uri_ip(master_uri)
+            rospy.get_master().getPid()
+            master_state = "connected"
+        except Exception as error:
+            master_state = "disconnected ({})".format(error)
+            master_ip = "unresolved"
+
+        lines = [
+            "ROS master: {} ({}, IP: {})".format(
+                master_state,
+                master_uri,
+                master_ip,
+            ),
+        ]
+        node_uri = rospy.get_node_uri()
+        if node_uri:
+            try:
+                node_ip = self.resolve_uri_ip(node_uri)
+            except Exception:
+                node_ip = "unresolved"
+            lines.append("ROS node: {} (IP: {})".format(
+                node_uri,
+                node_ip,
+            ))
+        ros_ip = os.environ.get("ROS_IP")
+        ros_hostname = os.environ.get("ROS_HOSTNAME")
+        if ros_ip:
+            lines.append("ROS address setting: ROS_IP={}".format(ros_ip))
+        elif ros_hostname:
+            lines.append(
+                "ROS address setting: ROS_HOSTNAME={}".format(ros_hostname)
+            )
+        else:
+            lines.append("ROS address setting: automatic")
+
+        process = self.bag_process
+        if process is not None and process.poll() is None:
+            lines.append("rosbag: running (pid: {})".format(process.pid))
+        elif self.session is None:
+            lines.append("rosbag: inactive")
+        else:
+            lines.append("rosbag: stopped unexpectedly")
+        return lines
+
+    def resolve_uri_ip(self, uri):
+        hostname = urlparse(uri).hostname
+        if not hostname:
+            raise ValueError("URI has no hostname")
+        return socket.gethostbyname(hostname)
+
+    def hrpsys_status_line(self):
+        service_names = [
+            self.HRPSYS_CLEAR_SERVICE,
+            self.HRPSYS_MAX_LENGTH_SERVICE,
+            self.HRPSYS_SAVE_SERVICE,
+        ]
+        available_count = 0
+        for service_name in service_names:
+            try:
+                rospy.wait_for_service(service_name, timeout=0.2)
+                available_count += 1
+            except rospy.ROSException:
+                pass
+        if available_count == len(service_names):
+            state = "connected"
+        else:
+            state = "disconnected"
+        return "hrpsys: {} ({}/{} services)".format(
+            state,
+            available_count,
+            len(service_names),
+        )
+
+    def neuro_status_lines(self):
+        if not self.neuro_targets:
+            return ["Neuro: disabled (no targets configured)"]
+
+        available_targets, _ = self.check_neuro(
+            timeout_sec=0.5
+        )
+        available_names = set([
+            target["name"] for target in available_targets
+        ])
+        lines = []
+        for target in self.neuro_targets:
+            if target["name"] in available_names:
+                state = "connected"
+            else:
+                state = "disconnected"
+            requirement = "required" if target["required"] else "optional"
+            lines.append("Neuro {}: {} ({}, {}:{})".format(
+                target["name"],
+                state,
+                requirement,
+                target["host"],
+                target["port"],
+            ))
+        return lines
 
     def on_shutdown(self):
         with self.lock:

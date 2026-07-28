@@ -9,6 +9,52 @@ from std_srvs.srv import Trigger
 from jsk_robot_log_manager.srv import StartLogging
 
 
+ANSI_WHITE = "\033[37m"
+ANSI_YELLOW = "\033[33m"
+ANSI_RED = "\033[31m"
+ANSI_RESET = "\033[0m"
+
+
+def status_line_color(line, success):
+    if ": SKIPPED" in line or line == "Overall: PASS with warnings":
+        return ANSI_YELLOW
+    if ": FAIL" in line or line.startswith("Overall: FAIL"):
+        return ANSI_RED
+    if ": PASS" in line or line == "Overall: PASS":
+        return ANSI_WHITE
+    if (
+        line.startswith("ROS master: disconnected")
+        or line.startswith("hrpsys: disconnected")
+        or line.startswith("rosbag: stopped unexpectedly")
+        or (
+            line.startswith("Neuro ")
+            and ": disconnected (required," in line
+        )
+    ):
+        return ANSI_RED
+    if (
+        line.startswith("Neuro ")
+        and (
+            ": disconnected (optional," in line
+            or " is not reachable " in line
+        )
+    ):
+        return ANSI_YELLOW
+    if not success:
+        return ANSI_RED
+    return ANSI_WHITE
+
+
+def print_message(message, success):
+    use_color = sys.stdout.isatty()
+    for line in message.splitlines():
+        if use_color:
+            color = status_line_color(line, success)
+            print("{}{}{}".format(color, line, ANSI_RESET))
+        else:
+            print(line)
+
+
 def call_service(service_name, service_type, *args):
     try:
         rospy.wait_for_service(service_name, timeout=5.0)
@@ -17,9 +63,9 @@ def call_service(service_name, service_type, *args):
         print("ERROR: {}".format(error), file=sys.stderr)
         return 1
 
-    print(response.message)
+    print_message(response.message, response.success)
     if hasattr(response, "directory") and response.directory:
-        print(response.directory)
+        print_message(response.directory, response.success)
     return 0 if response.success else 1
 
 
@@ -44,6 +90,13 @@ def main():
     )
     subparsers.add_parser("stop")
     subparsers.add_parser("status")
+    subparsers.add_parser(
+        "test",
+        help=(
+            "record for about five seconds, verify non-empty output, "
+            "and discard the test data"
+        ),
+    )
 
     args = parser.parse_args(rospy.myargv()[1:])
     if args.command is None:
@@ -61,6 +114,8 @@ def main():
             args.name,
             args.duration,
         )
+    if args.command == "test":
+        print("Test running (about 5 seconds)...", flush=True)
     return call_service(
         manager_namespace + "/{}".format(args.command),
         Trigger,
