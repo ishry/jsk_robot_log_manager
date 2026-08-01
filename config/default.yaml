@@ -7,3 +7,7 @@ neuro_targets:
     host: 127.0.0.1
     port: 7002
     required: false
+
+topics:
+  - /robot_relative_box_pose
+  - /robot_relative_box_twist

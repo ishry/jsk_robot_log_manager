@@ -2,7 +2,7 @@
   <arg name="config_file" default="$(find jsk_robot_log_manager)/config/default.yaml"/>
   <arg name="log_root" default="$(env HOME)/jsk_robot_logs"/>
   <arg name="default_duration_sec" default="600"/>
-  <arg name="record_all" default="true"/>
+  <arg name="record_all" default="false"/>
   <arg name="min_free_gb" default="5"/>
   <arg name="namespace" default="/"/>
   <arg name="node_name" default="jsk_robot_log_manager"/>
