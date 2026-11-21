@@ -17,6 +17,15 @@ catkin build jsk_robot_log_manager
 source devel/setup.bash
 ```
 
+### hrpsysの端末ログ
+
+実機のbyobuから通常どおり起動すると，同じセッションの `hrpsys` ペインを監視する．
+`log start`〜`log stop` の端末出力は試行フォルダの `hrpsys/console.log` に保存する．
+byobu外から起動する場合は `hrpsys_console_pane:=%7` のようにペインIDを指定する
+（実際のIDは `tmux list-panes -a -F '#{window_name} #{pane_id}'` で確認）．
+すでに出力を保存する設定があるペインはその設定を維持し，監視を開始できない旨を表示する．
+監視を起動しない場合は `record_hrpsys_console:=false` を指定する．
+
 ### Neuro VMの設定
 
 [JskNeuroLogPlugin.hpp](include/jsk_robot_log_manager/JskNeuroLogPlugin.hpp)

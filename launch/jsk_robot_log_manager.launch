@@ -6,6 +6,8 @@
   <arg name="min_free_gb" default="5"/>
   <arg name="namespace" default="/"/>
   <arg name="node_name" default="jsk_robot_log_manager"/>
+  <arg name="record_hrpsys_console" default="true"/>
+  <arg name="hrpsys_console_pane" default=""/>
 
   <node pkg="jsk_robot_log_manager" type="jsk_robot_log_manager_node.py"
         name="$(arg node_name)" ns="$(arg namespace)" output="screen">
@@ -14,5 +16,12 @@
     <param name="default_duration_sec" value="$(arg default_duration_sec)"/>
     <param name="record_all" value="$(arg record_all)"/>
     <param name="min_free_gb" value="$(arg min_free_gb)"/>
+  </node>
+  <node pkg="jsk_robot_log_manager" type="hrpsys_console_logger.py"
+        name="$(arg node_name)_hrpsys_console" ns="$(arg namespace)" output="screen"
+        if="$(arg record_hrpsys_console)">
+    <param name="log_root" value="$(arg log_root)"/>
+    <param name="event_topic" value="$(arg node_name)/event"/>
+    <param name="pane" value="$(arg hrpsys_console_pane)"/>
   </node>
 </launch>

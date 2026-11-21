@@ -44,6 +44,7 @@ target_link_libraries(JskNeuroLogPlugin
 catkin_install_python(PROGRAMS
   scripts/jsk-robot-log
   scripts/jsk_robot_log_manager_node.py
+  scripts/hrpsys_console_logger.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
