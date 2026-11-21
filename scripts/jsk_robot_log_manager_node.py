@@ -53,6 +53,9 @@ class JskRobotLogManager(object):
             rospy.get_param("~neuro_targets", [])
         )
 
+        policy_path = rospy.get_param("~rl_policy_log_path", "")
+        self.rl_policy_log_path = os.path.expanduser(policy_path)
+
         self.lock = threading.RLock()
         self.session = None
         self.bag_process = None
@@ -390,6 +393,65 @@ class JskRobotLogManager(object):
         errors.extend(self.stop_rosbag())
         session["errors"].extend(errors)
 
+    @staticmethod
+    def rl_policy_file_state(stat):
+        return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns,
+                stat.st_ctime_ns]
+
+    def watch_rl_policy_log(self, session):
+        if not self.rl_policy_log_path:
+            return
+        component = {"status": "watching", "source": self.rl_policy_log_path}
+        session["components"]["rl_policy"] = component
+        try:
+            component["initial_state"] = self.rl_policy_file_state(
+                os.stat(self.rl_policy_log_path)
+            )
+        except FileNotFoundError:
+            component["initial_state"] = None
+        except OSError as error:
+            self.record_rl_policy_error(session, component, error)
+
+    def save_rl_policy_log(self, session):
+        component = session["components"].get("rl_policy")
+        if component is None or component["status"] != "watching":
+            return
+
+        source_path = component["source"]
+        relative_path = os.path.join("hrpsys", os.path.basename(source_path))
+        destination = os.path.join(session["directory"], relative_path)
+        temporary = destination + ".tmp"
+        try:
+            try:
+                source = open(source_path, "rb")
+            except FileNotFoundError:
+                component.update(status="skipped", reason="missing")
+                return
+            with source:
+                state = self.rl_policy_file_state(os.fstat(source.fileno()))
+                if state == component["initial_state"]:
+                    component.update(status="skipped", reason="unchanged")
+                    return
+                if state[2] == 0:
+                    component.update(status="skipped", reason="empty")
+                    return
+                try:
+                    with open(temporary, "wb") as output:
+                        shutil.copyfileobj(source, output)
+                    os.replace(temporary, destination)
+                finally:
+                    if os.path.exists(temporary):
+                        os.unlink(temporary)
+            component.update(status="saved", path=relative_path)
+        except OSError as error:
+            self.record_rl_policy_error(session, component, error)
+
+    def record_rl_policy_error(self, session, component, error):
+        message = "Failed to collect RL policy log: {}".format(error)
+        component.update(status="failed", error=str(error))
+        session["warnings"].append(message)
+        rospy.logwarn(message)
+
     def handle_start(self, request):
         with self.lock:
             if self.session is not None:
@@ -506,6 +568,7 @@ class JskRobotLogManager(object):
                     "pid": self.bag_process.pid,
                 }
 
+                self.watch_rl_policy_log(session)
                 session["status"] = "recording"
                 session["started_at_utc"] = self.now_utc()
                 self.session = session
@@ -543,6 +606,7 @@ class JskRobotLogManager(object):
         errors = []
         session["status"] = "stopping"
         session["stop_reason"] = reason
+        self.save_rl_policy_log(session)
         self.publish_event("STOP", session)
         self.write_manifest(session)
         rospy.sleep(0.1)

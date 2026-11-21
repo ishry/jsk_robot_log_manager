@@ -11,3 +11,6 @@ neuro_targets:
 topics:
   - /robot_relative_box_pose
   - /robot_relative_box_twist
+
+# Optional local RTC diagnostic log. Set to "" to disable collection.
+rl_policy_log_path: /tmp/rl_manta_double_grasp_real_policy.jsonl
