@@ -63,7 +63,7 @@ class HrpsysConsoleLogger:
         path = os.path.join(directory, "console.log")
         with open(path, "ab"):
             pass
-        self.tmux("pipe-pane", "-o", "-O", "-t", pane, "exec cat >> " + shlex.quote(path))
+        self.tmux("pipe-pane", "-o", "-t", pane, "exec cat >> " + shlex.quote(path))
         self.capture = (session, pane)
         rospy.loginfo("Saving hrpsys pane %s to %s", pane, path)
 
